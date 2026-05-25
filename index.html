@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="MY Transit">
+    <link rel="manifest" href="data:application/json,{}">
+    <title>Malaysia Transit Hub — Live + Planning</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Protobuf decoder for GTFS Realtime -->
+    <script src="https://unpkg.com/gtfs-realtime-bindings@0.1.1/dist/gtfs-realtime-bindings.min.js">
+    </script>
+
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: rgba(22, 27, 34, 0.75);
+            --text: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --accent-glow: rgba(88, 166, 255, 0.25);
+            --green: #3fb950;
+            --red: #f85149;
+            --amber: #d2991d;
+            --purple: #a371f7;
+            --blue: #58a6ff;
+            --orange: #ff9800;
+            --bus-color: #03a9f4;
+            --border: rgba(255, 255, 255, 0.08);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            --glass-bg: rgba(22, 27, 34, 0.65);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glass-blur: 18px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #0d1117 0%, #161b22 25%, #0d1117 50%, #111820 75%, #0d1117 100%);
+            background-attachment: fixed;
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body::before, body::after {
+            content: '';
+            position: fixed;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        body::before {
+            top: -180px; left: -120px;
+            width: 500px; height: 500px;
+            background: radial-gradient(circle, rgba(88,166,255,0.07) 0%, transparent 70%);
+            animation: orbFloat 20s ease-in-out infinite;
+        }
+        body::after {
+            bottom: -200px; right: -100px;
+            width: 550px; height: 550px;
+            background: radial-gradient(circle, rgba(163,113,247,0.06) 0%, transparent 70%);
+            animation: orbFloat 25s ease-in-out infinite reverse;
+        }
+        @keyframes orbFloat {
+            0%,100% { transform: translate(0,0); }
+            25% { transform: translate(30px,-40px); }
+            50% { transform: translate(-20px,20px); }
+            75% { transform: translate(-35px,-15px); }
+        }
+
+        .header {
+            position: sticky; top: 0; z-index: 1000;
+            background: rgba(13,17,23,0.8);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border-bottom: 1px solid var(--border);
+            padding: 14px 24px;
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 12px;
+        }
+        .header .logo { display: flex; align-items: center; gap: 10px; font-family: 'Poppins', sans-serif; font-weight: 700; font-size: 1.35rem; }
+        .header .logo .icon {
+            width: 40px; height: 40px; border-radius: 12px;
+            background: linear-gradient(135deg, #58a6ff, #3fb950);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.4rem; color: #fff;
+            box-shadow: 0 4px 16px rgba(88,166,255,0.3);
+        }
+        .header .badge {
+            font-size: 0.7rem; background: rgba(88,166,255,0.15);
+            color: var(--accent); padding: 4px 10px; border-radius: 20px;
+            font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase;
+        }
+
+        .tab-nav {
+            display: flex; gap: 4px; flex-wrap: wrap;
+            padding: 10px 20px;
+            background: rgba(13,17,23,0.55);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            position: sticky; top: 68px; z-index: 999;
+            overflow-x: auto; scrollbar-width: none;
+        }
+        .tab-nav::-webkit-scrollbar { display: none; }
+        .tab-btn {
+            padding: 9px 16px; border-radius: 24px;
+            border: 1px solid transparent; background: transparent;
+            color: var(--text-secondary); cursor: pointer;
+            font-family: 'Inter', sans-serif; font-size: 0.85rem;
+            font-weight: 500; white-space: nowrap;
+            transition: all 0.25s ease; letter-spacing: 0.2px;
+        }
+        .tab-btn:hover {
+            background: rgba(255,255,255,0.04);
+            color: var(--text); border-color: rgba(255,255,255,0.15);
+        }
+        .tab-btn.active {
+            background: rgba(88,166,255,0.18);
+            color: var(--accent); border-color: rgba(88,166,255,0.4);
+            box-shadow: 0 0 18px var(--accent-glow); font-weight: 600;
+        }
+
+        .main-container {
+            max-width: 1200px; margin: 0 auto;
+            padding: 20px 20px 40px; position: relative; z-index: 1;
+        }
+        .tab-content { display: none; animation: fadeSlideIn 0.4s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(var(--glass-blur));
+            -webkit-backdrop-filter: blur(var(--glass-blur));
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius); padding: 24px;
+            margin-bottom: 20px; box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+        }
+        .glass-card:hover { border-color: rgba(255,255,255,0.18); box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
+        .glass-card h2 { font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 1.25rem; margin-bottom: 16px; }
+        .glass-card h3 { font-family: 'Poppins', sans-serif; font-weight: 500; font-size: 1rem; margin-bottom: 10px; color: var(--text-secondary); }
+
+        select, input {
+            width: 100%; padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: rgba(13,17,23,0.7);
+            color: var(--text); font-family: 'Inter', sans-serif;
+            font-size: 0.9rem; transition: all 0.25s ease;
+            margin-bottom: 12px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+        select:focus, input:focus {
+            outline: none; border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+        label { display: block; font-weight: 500; font-size: 0.85rem; margin-bottom: 4px; color: var(--text-secondary); }
+        button {
+            padding: 12px 22px; border-radius: 24px; border: none;
+            background: linear-gradient(135deg, #58a6ff, #3b8beb);
+            color: #fff; cursor: pointer; font-family: 'Inter', sans-serif;
+            font-weight: 600; font-size: 0.9rem; letter-spacing: 0.2px;
+            transition: all 0.3s ease; box-shadow: 0 4px 16px rgba(88,166,255,0.25);
+        }
+        button:hover { box-shadow: 0 6px 24px rgba(88,166,255,0.4); transform: translateY(-1px); }
+        button.secondary { background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--text); box-shadow: none; }
+        button.secondary:hover { background: rgba(255,255,255,0.12); box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
+        .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+        .result-box {
+            background: rgba(13,17,23,0.6);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 16px;
+            margin-top: 14px; font-size: 0.9rem; line-height: 1.7;
+        }
+        .highlight { font-weight: 700; color: var(--accent); font-size: 1.1rem; }
+        .warning { background: rgba(210,153,29,0.1); border: 1px solid rgba(210,153,29,0.3); color: var(--amber); padding: 10px 14px; border-radius: var(--radius-sm); font-size: 0.82rem; margin-top: 10px; }
+
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { font-weight: 600; color: var(--text-secondary); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+
+        #map { height: 500px; border-radius: var(--radius); border: 1px solid var(--border); background: #1a1f28; }
+        .map-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; align-items: center; }
+        .map-controls select { width: auto; min-width: 160px; margin-bottom: 0; }
+        .live-toggle { display: flex; gap: 16px; font-size: 0.85rem; align-items: center; }
+        .live-toggle label { display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text); margin-bottom: 0; }
+        .map-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; font-size: 0.78rem; align-items: center; }
+        .map-legend span { display: flex; align-items: center; gap: 5px; }
+        .legend-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 2px solid rgba(255,255,255,0.5); }
+
+        .mall-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-top: 14px; }
+        .mall-card {
+            background: rgba(13,17,23,0.7); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 14px;
+            transition: all 0.2s;
+        }
+        .mall-card:hover { border-color: var(--accent); background: rgba(88,166,255,0.05); }
+        .mall-card .mall-name { font-weight: 600; font-size: 1rem; }
+        .mall-card .mall-dist { font-size: 0.8rem; color: var(--accent); }
+        .surau-tag { display: inline-block; background: #2ea04320; color: #3fb950; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; margin-top: 6px; }
+        .no-surau { display: inline-block; background: #f8514920; color: #f85149; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; margin-top: 6px; }
+
+        @media (max-width: 768px) {
+            .header { padding: 10px 14px; }
+            .tab-nav { top: 56px; padding: 8px 10px; }
+            .tab-btn { padding: 7px 11px; font-size: 0.75rem; }
+            .glass-card { padding: 16px; }
+            #map { height: 340px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo">
+            <div class="icon">🚇</div>
+            <span>MY Transit Hub</span>
+        </div>
+        <span class="badge">Klang Valley · Live + Planning</span>
+    </header>
+
+    <nav class="tab-nav" id="tabNav">
+        <button class="tab-btn active" data-tab="tab-info">📋 Info & APIs</button>
+        <button class="tab-btn" data-tab="tab-fare">💰 Fare Calculator</button>
+        <button class="tab-btn" data-tab="tab-map">🗺️ Live Map</button>
+        <button class="tab-btn" data-tab="tab-planner">🧭 Journey Planner</button>
+        <button class="tab-btn" data-tab="tab-malls">🛍️ Mall & Surau Finder</button>
+        <button class="tab-btn" data-tab="tab-alt">🚌 Alternative Transport</button>
+    </nav>
+
+    <div class="main-container">
+        <!-- TAB 1: Info & APIs (unchanged) -->
+        <div class="tab-content active" id="tab-info">
+            <div class="glass-card">
+                <h2>📋 Klang Valley Transit Overview</h2>
+                <p style="margin-bottom:14px;color:var(--text-secondary);">The integrated rail network spans over <strong>200 stations</strong> across MRT, LRT, Monorail, KTM Komuter, and BRT.</p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;">
+                    <div style="background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.3);border-radius:10px;padding:14px;"><strong>🚇 MRT Kajang</strong><br><small style="color:var(--text-secondary);">46 km · 31 stations</small></div>
+                    <div style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:10px;padding:14px;"><strong>🚈 LRT Kelana Jaya</strong><br><small style="color:var(--text-secondary);">46 km · 37 stations</small></div>
+                    <div style="background:rgba(210,153,29,0.1);border:1px solid rgba(210,153,29,0.3);border-radius:10px;padding:14px;"><strong>🚝 Monorail</strong><br><small style="color:var(--text-secondary);">11 km · 11 stations</small></div>
+                    <div style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);border-radius:10px;padding:14px;"><strong>🚂 KTM Komuter</strong><br><small style="color:var(--text-secondary);">280+ km network</small></div>
+                    <div style="background:rgba(163,113,247,0.1);border:1px solid rgba(163,113,247,0.3);border-radius:10px;padding:14px;"><strong>🚍 BRT Sunway</strong><br><small style="color:var(--text-secondary);">5.4 km · 7 stations</small></div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;padding:14px;"><strong>🚌 Rapid Bus</strong><br><small style="color:var(--text-secondary);">170+ routes · Klang Valley</small></div>
+                </div>
+            </div>
+            <div class="glass-card">
+                <h2>🔌 Free Transit APIs (all used in this dashboard)</h2>
+                <table>
+                    <thead><tr><th>API</th><th>Purpose</th><th>Endpoint / Source</th></tr></thead>
+                    <tbody>
+                        <tr><td>GTFS Realtime (KTMB)</td><td>Live train positions</td><td><small>api.data.gov.my/gtfs-realtime/vehicle-position/ktmb</small></td></tr>
+                        <tr><td>GTFS Realtime (Prasarana)</td><td>Live bus positions (Rapid KL, Penang, Kuantan, etc.)</td><td><small>api.data.gov.my/gtfs-realtime/vehicle-position/prasarana</small></td></tr>
+                        <tr><td>Nominatim</td><td>Location search on map</td><td>nominatim.openstreetmap.org</td></tr>
+                        <tr><td>Leaflet / OSM</td><td>Interactive mapping</td><td>leafletjs.com + CartoDB dark tiles</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB 2: Fare Calculator (unchanged) -->
+        <div class="tab-content" id="tab-fare">
+            <div class="glass-card">
+                <h2>💰 Fare Estimator</h2>
+                <p style="color:var(--text-secondary);margin-bottom:16px;">Select stations to estimate the distance-based fare. <em>Actual fares depend on the integrated Rapid KL table.</em></p>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                    <div><label for="fareOrigin">Origin Station</label><select id="fareOrigin"></select></div>
+                    <div><label for="fareDest">Destination Station</label><select id="fareDest"></select></div>
+                </div>
+                <button onclick="calculateFare()" style="margin-top:8px;">💵 Estimate Fare</button>
+                <div id="fareResult"></div>
+            </div>
+            <div class="glass-card">
+                <h2>📊 Fare Reference Table (Rapid KL Integrated)</h2>
+                <table>
+                    <thead><tr><th>Distance (km)</th><th>Approx. Fare (RM)</th><th>Notes</th></tr></thead>
+                    <tbody>
+                        <tr><td>0 – 3</td><td>RM 1.20 – 1.50</td><td>Minimum fare</td></tr>
+                        <tr><td>3 – 6</td><td>RM 1.50 – 2.30</td><td>Short hop</td></tr>
+                        <tr><td>6 – 10</td><td>RM 2.30 – 3.40</td><td>Medium distance</td></tr>
+                        <tr><td>10 – 15</td><td>RM 3.40 – 4.80</td><td>Longer commute</td></tr>
+                        <tr><td>15 – 25</td><td>RM 4.80 – 6.40</td><td>Near max</td></tr>
+                        <tr><td>25+</td><td>RM 6.40 (capped)</td><td>Daily integrated cap</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB 3: Live Map (unchanged) -->
+        <div class="tab-content" id="tab-map">
+            <div class="glass-card">
+                <h2>🗺️ Live Transit Map (Trains & Buses)</h2>
+                <div class="map-controls">
+                    <input type="text" id="mapSearchInput" placeholder="🔍 Search any location..." style="flex:1;min-width:200px;margin-bottom:0;">
+                    <button onclick="searchMapLocation()">Search</button>
+                    <select id="busCategorySelect" onchange="refreshLiveBusLayer()" style="margin-bottom:0;width:auto;">
+                        <option value="rapid-bus-kl">🚌 Rapid Bus KL</option>
+                        <option value="rapid-bus-penang">🚌 Rapid Penang</option>
+                        <option value="rapid-bus-kuantan">🚌 Rapid Kuantan</option>
+                        <option value="mrt-feeder">🚌 MRT Feeder</option>
+                    </select>
+                    <button class="secondary" onclick="resetMapMarkers()" style="margin-bottom:0;">🔄 Reset Pins</button>
+                </div>
+                <div class="live-toggle">
+                    <label><input type="checkbox" id="toggleTrains" checked onchange="toggleLayer('trains')"> 🚂 KTMB Trains</label>
+                    <label><input type="checkbox" id="toggleBuses" checked onchange="toggleLayer('buses')"> 🚌 Buses</label>
+                    <span style="margin-left:auto;font-size:0.8rem;color:var(--text-secondary);" id="liveUpdateTime"></span>
+                </div>
+                <p style="font-size:0.78rem;color:var(--text-secondary);margin:8px 0;">🖱️ Click on map: 1st = <span style="color:#3fb950;">Origin</span>, 2nd = <span style="color:#f85149;">Destination</span> (straight-line distance).</p>
+                <div id="map"></div>
+                <div class="map-legend">
+                    <span><span class="legend-dot" style="background:#3fb950;"></span> MRT Kajang</span>
+                    <span><span class="legend-dot" style="background:#f85149;"></span> LRT Kelana Jaya</span>
+                    <span><span class="legend-dot" style="background:#d2991d;"></span> Monorail</span>
+                    <span><span class="legend-dot" style="background:#58a6ff;"></span> KTM</span>
+                    <span><span class="legend-dot" style="background:#a371f7;"></span> BRT</span>
+                    <span><span class="legend-dot" style="background:#ff9800;"></span> Live Train</span>
+                    <span><span class="legend-dot" style="background:#03a9f4;"></span> Live Bus</span>
+                    <span><span class="legend-dot" style="background:#fff;border-color:#3fb950;"></span> Origin pin</span>
+                    <span><span class="legend-dot" style="background:#fff;border-color:#f85149;"></span> Dest pin</span>
+                </div>
+                <div id="mapDistanceResult" style="margin-top:10px;font-size:0.9rem;"></div>
+            </div>
+        </div>
+
+        <!-- TAB 4: Journey Planner (unchanged) -->
+        <div class="tab-content" id="tab-planner">
+            <div class="glass-card">
+                <h2>🧭 Journey Planner (BFS Route Finder)</h2>
+                <p style="color:var(--text-secondary);margin-bottom:14px;">Find a path between any two stations using the connected rail graph.</p>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                    <div><label for="planOrigin">From Station</label><select id="planOrigin"></select></div>
+                    <div><label for="planDest">To Station</label><select id="planDest"></select></div>
+                </div>
+                <button onclick="findRoute()" style="margin-top:8px;">🔍 Find Route</button>
+                <div id="routeResult"></div>
+            </div>
+        </div>
+
+        <!-- TAB 5: Mall & Surau Finder (UPGRADED) -->
+        <div class="tab-content" id="tab-malls">
+            <div class="glass-card">
+                <h2>🛍️ Mall Finder — With Surau & Distance</h2>
+                <p style="color:var(--text-secondary);margin-bottom:14px;">Select a station to see the <strong>5 nearest malls</strong> (sorted by distance) and their prayer room (surau) status.</p>
+                <label for="mallStation">Station</label>
+                <select id="mallStation" onchange="findMallsProximity()"></select>
+                <div id="mallResult"></div>
+            </div>
+            <div class="glass-card">
+                <h3>📌 Quick Station‑to‑Mall Direct Mappings</h3>
+                <p style="color:var(--text-secondary);font-size:0.85rem;">These are traditionally linked stations (walking distance).</p>
+                <div id="directMappingsTable" style="margin-top:10px;"></div>
+            </div>
+        </div>
+
+        <!-- TAB 6: Alternative Transport (unchanged) -->
+        <div class="tab-content" id="tab-alt">
+            <div class="glass-card">
+                <h2>🚌 Alternative Transport Options</h2>
+                <p style="color:var(--text-secondary);margin-bottom:14px;">When trains are disrupted, these backup options are available near each station.</p>
+                <label for="altStation">Station</label>
+                <select id="altStation" onchange="findAlternatives()"></select>
+                <div id="altResult"></div>
+            </div>
+            <div class="glass-card">
+                <h3>📋 Default Alternatives (available near most urban stations)</h3>
+                <table>
+                    <thead><tr><th>Option</th><th>Description</th><th>Coverage</th></tr></thead>
+                    <tbody>
+                        <tr><td>🚌 <strong>Rail Bridging Bus</strong></td><td>Replacement buses during LRT/MRT disruptions</td><td>Along disrupted line segments</td></tr>
+                        <tr><td>🚐 <strong>Rapid DRT Van</strong></td><td>On-demand shared vans (book via app)</td><td>Selected zones (e.g., Puchong, Subang)</td></tr>
+                        <tr><td>🚌 <strong>Regular Rapid Bus</strong></td><td>Scheduled feeder & trunk bus routes</td><td>Klang Valley wide</td></tr>
+                        <tr><td>🆓 <strong>Go KL Free Bus</strong></td><td>Free city buses in Kuala Lumpur core</td><td>KL city centre loops</td></tr>
+                        <tr><td>🚂 <strong>KTM Komuter</strong></td><td>Alternative rail corridor</td><td>KL Sentral – Seremban / Port Klang / Rawang</td></tr>
+                        <tr><td>📱 <strong>E-hailing</strong></td><td>Grab, AirAsia Ride, etc.</td><td>Everywhere</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+    </script>
+
+    <script>
+        // ===================== STATION DATASET (unchanged) =====================
+        const stations = [
+            { id: 'kwasa', name: 'Kwasa Damansara', lat: 3.1695, lng: 101.5695, lines: ['MRT Kajang'], neighbors: ['surian'] },
+            { id: 'surian', name: 'Surian', lat: 3.1605, lng: 101.6050, lines: ['MRT Kajang'], neighbors: ['kwasa', 'mutiarad'] },
+            { id: 'mutiarad', name: 'Mutiara Damansara', lat: 3.1550, lng: 101.6100, lines: ['MRT Kajang'], neighbors: ['surian', 'bandarutama'] },
+            { id: 'bandarutama', name: 'Bandar Utama', lat: 3.1480, lng: 101.6150, lines: ['MRT Kajang'], neighbors: ['mutiarad', 'ttdi'] },
+            { id: 'ttdi', name: 'Taman Tun Dr Ismail', lat: 3.1400, lng: 101.6280, lines: ['MRT Kajang'], neighbors: ['bandarutama', 'phileo'] },
+            { id: 'phileo', name: 'Phileo Damansara', lat: 3.1295, lng: 101.6430, lines: ['MRT Kajang'], neighbors: ['ttdi', 'pbd'] },
+            { id: 'pbd', name: 'Pusat Bandar Damansara', lat: 3.1430, lng: 101.6600, lines: ['MRT Kajang'], neighbors: ['phileo', 'semantan'] },
+            { id: 'semantan', name: 'Semantan', lat: 3.1510, lng: 101.6650, lines: ['MRT Kajang'], neighbors: ['pbd', 'muziumnegara'] },
+            { id: 'muziumnegara', name: 'Muzium Negara', lat: 3.1370, lng: 101.6870, lines: ['MRT Kajang'], neighbors: ['semantan', 'klsentral'] },
+            { id: 'klsentral', name: 'KL Sentral', lat: 3.1340, lng: 101.6860, lines: ['MRT Kajang', 'LRT Kelana Jaya', 'Monorail', 'KTM'], neighbors: ['muziumnegara', 'pasarseni', 'bangsar', 'tunsambanthan', 'midvalley'] },
+            { id: 'pasarseni', name: 'Pasar Seni', lat: 3.1425, lng: 101.6955, lines: ['MRT Kajang', 'LRT Kelana Jaya'], neighbors: ['klsentral', 'merdeka', 'masjidjamek'] },
+            { id: 'merdeka', name: 'Merdeka', lat: 3.1410, lng: 101.7025, lines: ['MRT Kajang'], neighbors: ['pasarseni', 'bukitbintang_mrt'] },
+            { id: 'bukitbintang_mrt', name: 'Bukit Bintang (MRT)', lat: 3.1470, lng: 101.7119, lines: ['MRT Kajang'], neighbors: ['merdeka', 'trx', 'bukitbintang_mono'] },
+            { id: 'trx', name: 'TRX (Tun Razak Exchange)', lat: 3.1418, lng: 101.7170, lines: ['MRT Kajang'], neighbors: ['bukitbintang_mrt', 'cochrane'] },
+            { id: 'cochrane', name: 'Cochrane', lat: 3.1330, lng: 101.7230, lines: ['MRT Kajang'], neighbors: ['trx', 'maluri'] },
+            { id: 'maluri', name: 'Maluri', lat: 3.1230, lng: 101.7280, lines: ['MRT Kajang', 'LRT Ampang'], neighbors: ['cochrane', 'cheras'] },
+            { id: 'cheras', name: 'Cheras', lat: 3.1080, lng: 101.7150, lines: ['MRT Kajang'], neighbors: ['maluri', 'tamanmidah'] },
+            { id: 'tamanmidah', name: 'Taman Midah', lat: 3.0970, lng: 101.7080, lines: ['MRT Kajang'], neighbors: ['cheras', 'tamanconnaught'] },
+            { id: 'tamanconnaught', name: 'Taman Connaught', lat: 3.0830, lng: 101.7000, lines: ['MRT Kajang'], neighbors: ['tamanmidah', 'kajang'] },
+            { id: 'kajang', name: 'Kajang', lat: 2.9930, lng: 101.7890, lines: ['MRT Kajang'], neighbors: ['tamanconnaught'] },
+            { id: 'gombak', name: 'Gombak', lat: 3.2310, lng: 101.7240, lines: ['LRT Kelana Jaya'], neighbors: ['wangsamaju'] },
+            { id: 'wangsamaju', name: 'Wangsa Maju', lat: 3.2020, lng: 101.7320, lines: ['LRT Kelana Jaya'], neighbors: ['gombak', 'setiawangsa'] },
+            { id: 'setiawangsa', name: 'Setiawangsa', lat: 3.1760, lng: 101.7350, lines: ['LRT Kelana Jaya'], neighbors: ['wangsamaju', 'jelatek'] },
+            { id: 'jelatek', name: 'Jelatek', lat: 3.1670, lng: 101.7350, lines: ['LRT Kelana Jaya'], neighbors: ['setiawangsa', 'datokeramat'] },
+            { id: 'datokeramat', name: 'Dato\' Keramat', lat: 3.1650, lng: 101.7310, lines: ['LRT Kelana Jaya'], neighbors: ['jelatek', 'damai'] },
+            { id: 'damai', name: 'Damai', lat: 3.1630, lng: 101.7240, lines: ['LRT Kelana Jaya'], neighbors: ['datokeramat', 'ampangpark'] },
+            { id: 'ampangpark', name: 'Ampang Park', lat: 3.1600, lng: 101.7190, lines: ['LRT Kelana Jaya'], neighbors: ['damai', 'klcc'] },
+            { id: 'klcc', name: 'KLCC', lat: 3.1590, lng: 101.7135, lines: ['LRT Kelana Jaya'], neighbors: ['ampangpark', 'kampungbaru'] },
+            { id: 'kampungbaru', name: 'Kampung Baru', lat: 3.1610, lng: 101.7060, lines: ['LRT Kelana Jaya'], neighbors: ['klcc', 'dangwangi'] },
+            { id: 'dangwangi', name: 'Dang Wangi', lat: 3.1560, lng: 101.7010, lines: ['LRT Kelana Jaya'], neighbors: ['kampungbaru', 'masjidjamek'] },
+            { id: 'masjidjamek', name: 'Masjid Jamek', lat: 3.1496, lng: 101.6967, lines: ['LRT Kelana Jaya', 'LRT Ampang'], neighbors: ['dangwangi', 'pasarseni'] },
+            { id: 'bangsar', name: 'Bangsar', lat: 3.1280, lng: 101.6780, lines: ['LRT Kelana Jaya'], neighbors: ['klsentral', 'abdullahhukum'] },
+            { id: 'abdullahhukum', name: 'Abdullah Hukum', lat: 3.1190, lng: 101.6740, lines: ['LRT Kelana Jaya'], neighbors: ['bangsar', 'kerinchi'] },
+            { id: 'kerinchi', name: 'Kerinchi', lat: 3.1110, lng: 101.6700, lines: ['LRT Kelana Jaya'], neighbors: ['abdullahhukum', 'universiti'] },
+            { id: 'universiti', name: 'Universiti', lat: 3.0980, lng: 101.6610, lines: ['LRT Kelana Jaya'], neighbors: ['kerinchi', 'tamanjaya'] },
+            { id: 'tamanjaya', name: 'Taman Jaya', lat: 3.0850, lng: 101.6450, lines: ['LRT Kelana Jaya'], neighbors: ['universiti', 'asiajaya'] },
+            { id: 'asiajaya', name: 'Asia Jaya', lat: 3.0780, lng: 101.6380, lines: ['LRT Kelana Jaya'], neighbors: ['tamanjaya', 'kelanajaya'] },
+            { id: 'kelanajaya', name: 'Kelana Jaya', lat: 3.0720, lng: 101.6150, lines: ['LRT Kelana Jaya'], neighbors: ['asiajaya', 'subangjaya'] },
+            { id: 'subangjaya', name: 'Subang Jaya', lat: 3.0550, lng: 101.5850, lines: ['LRT Kelana Jaya'], neighbors: ['kelanajaya', 'usj7'] },
+            { id: 'usj7', name: 'USJ7', lat: 3.0550, lng: 101.5920, lines: ['LRT Kelana Jaya', 'BRT Sunway'], neighbors: ['subangjaya', 'putraheights', 'southquay'] },
+            { id: 'putraheights', name: 'Putra Heights', lat: 2.9950, lng: 101.5730, lines: ['LRT Kelana Jaya'], neighbors: ['usj7'] },
+            { id: 'titiwangsa', name: 'Titiwangsa', lat: 3.1730, lng: 101.6950, lines: ['Monorail', 'LRT Ampang'], neighbors: ['chowkit'] },
+            { id: 'chowkit', name: 'Chow Kit', lat: 3.1670, lng: 101.6980, lines: ['Monorail'], neighbors: ['titiwangsa', 'medantuanku'] },
+            { id: 'medantuanku', name: 'Medan Tuanku', lat: 3.1590, lng: 101.6990, lines: ['Monorail'], neighbors: ['chowkit', 'bukitnanas'] },
+            { id: 'bukitnanas', name: 'Bukit Nanas', lat: 3.1535, lng: 101.7030, lines: ['Monorail'], neighbors: ['medantuanku', 'rajachulan'] },
+            { id: 'rajachulan', name: 'Raja Chulan', lat: 3.1500, lng: 101.7080, lines: ['Monorail'], neighbors: ['bukitnanas', 'bukitbintang_mono'] },
+            { id: 'bukitbintang_mono', name: 'Bukit Bintang (Monorail)', lat: 3.1460, lng: 101.7115, lines: ['Monorail'], neighbors: ['rajachulan', 'imbi', 'bukitbintang_mrt'] },
+            { id: 'imbi', name: 'Imbi', lat: 3.1420, lng: 101.7100, lines: ['Monorail'], neighbors: ['bukitbintang_mono', 'hangtuah'] },
+            { id: 'hangtuah', name: 'Hang Tuah', lat: 3.1430, lng: 101.7060, lines: ['Monorail', 'LRT Ampang'], neighbors: ['imbi', 'maharajalela'] },
+            { id: 'maharajalela', name: 'Maharajalela', lat: 3.1390, lng: 101.6995, lines: ['Monorail'], neighbors: ['hangtuah', 'tunsambanthan'] },
+            { id: 'tunsambanthan', name: 'Tun Sambanthan', lat: 3.1330, lng: 101.6900, lines: ['Monorail'], neighbors: ['maharajalela', 'klsentral'] },
+            { id: 'sunwaysetia', name: 'Sunway-Setia Jaya', lat: 3.0680, lng: 101.6100, lines: ['BRT Sunway'], neighbors: ['mentari'] },
+            { id: 'mentari', name: 'Mentari', lat: 3.0690, lng: 101.6070, lines: ['BRT Sunway'], neighbors: ['sunwaysetia', 'sunwaylagoon'] },
+            { id: 'sunwaylagoon', name: 'Sunway Lagoon', lat: 3.0690, lng: 101.6030, lines: ['BRT Sunway'], neighbors: ['mentari', 'sunmed'] },
+            { id: 'sunmed', name: 'SunMed', lat: 3.0660, lng: 101.6000, lines: ['BRT Sunway'], neighbors: ['sunwaylagoon', 'sunumonash'] },
+            { id: 'sunumonash', name: 'SunU-Monash', lat: 3.0630, lng: 101.5970, lines: ['BRT Sunway'], neighbors: ['sunmed', 'southquay'] },
+            { id: 'southquay', name: 'South Quay-USJ1', lat: 3.0580, lng: 101.5950, lines: ['BRT Sunway'], neighbors: ['sunumonash', 'usj7'] },
+            { id: 'midvalley', name: 'Mid Valley', lat: 3.1180, lng: 101.6760, lines: ['KTM'], neighbors: ['klsentral', 'bandartasikselatan'] },
+            { id: 'bandartasikselatan', name: 'Bandar Tasik Selatan', lat: 3.0760, lng: 101.7100, lines: ['KTM'], neighbors: ['midvalley'] }
+        ];
+
+        const stationMap = {};
+        stations.forEach(s => { stationMap[s.id] = s; });
+
+        // ===================== EXPANDED MALL DATABASE (30+ malls with surau info) =====================
+        const mallsDatabase = [
+            { name: "Suria KLCC", lat: 3.1578, lng: 101.7114, surau: true, surauDetails: "Level 2, near Isetan. Wudu' area available." },
+            { name: "Pavilion KL", lat: 3.1490, lng: 101.7130, surau: true, surauDetails: "Level 6, Tokyo Street entrance. Spacious prayer room." },
+            { name: "Nu Sentral", lat: 3.1332, lng: 101.6867, surau: true, surauDetails: "Lower Ground floor, near the link bridge to KL Sentral." },
+            { name: "Mid Valley Megamall", lat: 3.1187, lng: 101.6769, surau: true, surauDetails: "Level 3, Centre Court (North). Ablution room." },
+            { name: "The Gardens Mall", lat: 3.1180, lng: 101.6758, surau: true, surauDetails: "Level 3, opposite Robinsons. Well-maintained." },
+            { name: "1 Utama Shopping Centre", lat: 3.1486, lng: 101.6160, surau: true, surauDetails: "New Wing, Level 2. Also surau at Old Wing LG." },
+            { name: "Sunway Pyramid", lat: 3.0730, lng: 101.6075, surau: true, surauDetails: "LG2, Orange Atrium. Wudu' facilities." },
+            { name: "Sunway Velocity Mall", lat: 3.1260, lng: 101.7250, surau: true, surauDetails: "Level 2, near Parkson. Separate male/female." },
+            { name: "IOI City Mall Putrajaya", lat: 2.9700, lng: 101.7130, surau: true, surauDetails: "Level 1, East Wing. Large prayer hall." },
+            { name: "Setia City Mall", lat: 3.1070, lng: 101.4650, surau: true, surauDetails: "Level 1, near H&M. Clean and quiet." },
+            { name: "Paradigm Mall Petaling Jaya", lat: 3.1140, lng: 101.5950, surau: true, surauDetails: "Level 2, near MBO Cinemas." },
+            { name: "KL Gateway Mall", lat: 3.1230, lng: 101.6720, surau: true, surauDetails: "Level 2, near the bridge to University LRT." },
+            { name: "Cheras Sentral Mall", lat: 3.1080, lng: 101.7140, surau: true, surauDetails: "Level 3, near food court." },
+            { name: "AEON Taman Maluri", lat: 3.1240, lng: 101.7300, surau: true, surauDetails: "1st floor, next to AEON supermarket." },
+            { name: "Quill City Mall", lat: 3.1460, lng: 101.7040, surau: true, surauDetails: "Level 3, near Daiso. Compact." },
+            { name: "SOGO Kuala Lumpur", lat: 3.1520, lng: 101.6950, surau: true, surauDetails: "6th floor, next to food court." },
+            { name: "Fahrenheit 88", lat: 3.1475, lng: 101.7135, surau: false, surauDetails: "No surau inside. Nearest at Pavilion KL." },
+            { name: "Lot 10", lat: 3.1465, lng: 101.7120, surau: false, surauDetails: "No surau. Use Pavilion KL or nearby mosques." },
+            { name: "Starhill Gallery", lat: 3.1482, lng: 101.7140, surau: false, surauDetails: "No dedicated surau." },
+            { name: "The Curve", lat: 3.1520, lng: 101.6080, surau: true, surauDetails: "Ground floor, near the Main Entrance." },
+            { name: "IPC Shopping Centre", lat: 3.1550, lng: 101.6090, surau: true, surauDetails: "Level 1, near Popular bookstore." },
+            { name: "IKEA Damansara", lat: 3.1540, lng: 101.6085, surau: true, surauDetails: "Near the restaurant, Level 1." },
+            { name: "Subang Parade", lat: 3.0530, lng: 101.5855, surau: true, surauDetails: "Lower Ground, next to Mydin." },
+            { name: "Empire Shopping Gallery", lat: 3.0560, lng: 101.5830, surau: true, surauDetails: "Level 1, near GSC." },
+            { name: "Da Men Mall", lat: 3.0535, lng: 101.5900, surau: true, surauDetails: "Level 2, near the entrance." },
+            { name: "Wangsa Walk Mall", lat: 3.2010, lng: 101.7340, surau: true, surauDetails: "Level 1, near TGV Cinemas." },
+            { name: "Jaya Shopping Centre", lat: 3.0790, lng: 101.6385, surau: true, surauDetails: "Level 2, near Digital Centre." },
+            { name: "Avenue K", lat: 3.1600, lng: 101.7130, surau: true, surauDetails: "Level 3, near the link bridge to KLCC." },
+            { name: "Metro Point Kajang", lat: 2.9935, lng: 101.7895, surau: true, surauDetails: "Level 1, near food court." },
+            { name: "Billion Kajang", lat: 2.9900, lng: 101.7880, surau: false, surauDetails: "No surau. Nearest Metro Point." },
+            { name: "DC Mall", lat: 3.1420, lng: 101.6605, surau: true, surauDetails: "Level 2, opposite lift lobby." },
+        ];
+
+        // Old direct mappings (still shown as quick reference)
+        const mallLookup = {
+            'klsentral': ['Nu Sentral'],
+            'klcc': ['Suria KLCC', 'Avenue K'],
+            'bukitbintang_mrt': ['Pavilion KL', 'Lot 10', 'Fahrenheit 88', 'Starhill Gallery'],
+            'bukitbintang_mono': ['Pavilion KL', 'Lot 10', 'Fahrenheit 88', 'Starhill Gallery', 'Sungei Wang Plaza'],
+            'mutiarad': ['IPC Shopping Centre', 'The Curve', 'IKEA Damansara'],
+            'bandarutama': ['1 Utama Shopping Centre'],
+            'surian': ['Sunway Giza', 'The Strand'],
+            'usj7': ['Da Men Mall', 'The Summit Subang USJ (nearby)'],
+            'maluri': ['Sunway Velocity Mall'],
+            'subangjaya': ['Subang Parade', 'Empire Shopping Gallery (nearby)'],
+            'kelanajaya': ['Paradigm Mall PJ'],
+            'asiajaya': ['Jaya Shopping Centre'],
+            'tamanmidah': ['AEON Taman Maluri'],
+            'cheras': ['Cheras Sentral Mall'],
+            'kajang': ['Metro Point Kajang', 'Billion Kajang'],
+            'wangsamaju': ['Wangsa Walk Mall'],
+            'midvalley': ['Mid Valley Megamall', 'The Gardens Mall'],
+            'abdullahhukum': ['KL Gateway Mall', 'Mid Valley Megamall (linked bridge)'],
+            'hangtuah': ['Quill City Mall (nearby)'],
+            'masjidjamek': ['SOGO KL (nearby)'],
+            'pbd': ['DC Mall (nearby)']
+        };
+
+        function getDefaultAlternatives(stationId) {
+            const base = [
+                { type: '🚌 Rail Bridging Bus', desc: 'Replacement bus service during LRT/MRT disruptions.', coverage: 'Along affected line segment' },
+                { type: '🚐 Rapid DRT Van', desc: 'On-demand shared van — book via Rapid KL app.', coverage: 'Selected Klang Valley zones' },
+                { type: '🚌 Regular Rapid Bus', desc: 'Scheduled feeder & trunk bus routes.', coverage: 'Klang Valley wide' },
+                { type: '🆓 Go KL Free Bus', desc: 'Free city bus loops in central KL.', coverage: 'KL city centre' },
+                { type: '🚂 KTM Komuter', desc: 'Alternative heavy rail corridor.', coverage: 'KL Sentral – outer suburbs' },
+                { type: '📱 E-hailing', desc: 'Grab, AirAsia Ride, inDrive.', coverage: 'Everywhere' }
+            ];
+            const extras = {
+                'klsentral': [{ type: '🚌 KLIA Transit Bus', desc: 'Direct bus to KLIA terminals.', coverage: 'KL Sentral – KLIA' }],
+                'klcc': [{ type: '🚌 KLCC Shuttle', desc: 'Free shuttle around KLCC area.', coverage: 'KLCC precinct' }],
+                'sunwaylagoon': [{ type: '🚌 Sunway Shuttle', desc: 'Free shuttle within Sunway City.', coverage: 'Sunway City' }]
+            };
+            return [...base, ...(extras[stationId] || [])];
+        }
+
+        // ===================== POPULATE DROPDOWNS =====================
+        function populateDropdown(selectId, defaultId = null) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            sel.innerHTML = '';
+            stations.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = `${s.name} [${s.lines.join(', ')}]`;
+                if (s.id === defaultId) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        }
+
+        function populateAllDropdowns() {
+            populateDropdown('fareOrigin', 'klsentral');
+            populateDropdown('fareDest', 'klcc');
+            populateDropdown('planOrigin', 'klsentral');
+            populateDropdown('planDest', 'klcc');
+            populateDropdown('mallStation', 'klsentral');
+            populateDropdown('altStation', 'klsentral');
+        }
+
+        // ===================== HAVERSINE & FARE =====================
+        function haversineKm(lat1, lng1, lat2, lng2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function calculateFare() {
+            const oid = document.getElementById('fareOrigin').value;
+            const did = document.getElementById('fareDest').value;
+            const res = document.getElementById('fareResult');
+            if (!oid || !did) return res.innerHTML = '<div class="warning">⚠️ Please select both stations.</div>';
+            if (oid === did) return res.innerHTML = '<div class="warning">⚠️ Same station. Minimum fare: <strong>RM 1.20</strong>.</div>';
+            const o = stationMap[oid], d = stationMap[did];
+            const dist = haversineKm(o.lat, o.lng, d.lat, d.lng);
+            const fare = Math.min(6.40, Math.round((1.20 + dist * 0.32) * 100) / 100);
+            res.innerHTML = `<div class="result-box"><p>📏 <strong>Distance:</strong> <span class="highlight">${dist.toFixed(2)} km</span></p><p>💰 <strong>Estimated fare:</strong> <span class="highlight">RM ${fare.toFixed(2)}</span></p><p style="font-size:0.8rem;color:var(--text-secondary);">${o.name} → ${d.name}</p></div><div class="warning">⚠️ Estimate based on straight-line distance. Actual Rapid KL fare uses path distance & integrated table. Daily cap RM 6.40.</div>`;
+        }
+
+        // ===================== BFS JOURNEY PLANNER =====================
+        function bfsRoute(startId, goalId) {
+            const queue = [startId], visited = new Set([startId]), parent = {};
+            while (queue.length) {
+                const cur = queue.shift();
+                if (cur === goalId) {
+                    const path = [];
+                    let node = goalId;
+                    while (node) { path.unshift(node); node = parent[node]; }
+                    return path;
+                }
+                const st = stationMap[cur];
+                if (!st) continue;
+                for (const nb of st.neighbors) {
+                    if (!visited.has(nb) && stationMap[nb]) { visited.add(nb); parent[nb] = cur; queue.push(nb); }
+                }
+            }
+            return null;
+        }
+
+        function findRoute() {
+            const o = document.getElementById('planOrigin').value, d = document.getElementById('planDest').value;
+            const res = document.getElementById('routeResult');
+            if (!o || !d) return res.innerHTML = '<div class="warning">⚠️ Select both stations.</div>';
+            if (o === d) return res.innerHTML = '<div class="result-box">📍 Already at <strong>' + stationMap[o].name + '</strong>.</div>';
+            const path = bfsRoute(o, d);
+            if (!path) return res.innerHTML = '<div class="warning">❌ No route found in current graph.</div>';
+            let html = '<div class="result-box"><p>✅ <strong>Route found!</strong> (' + (path.length - 1) + ' hop' + (path.length - 1 !== 1 ? 's' : '') + ')</p><div class="station-path">';
+            let totalDist = 0;
+            path.forEach((sid, i) => {
+                if (i > 0) { html += '<span class="path-arrow">→</span>'; totalDist += haversineKm(stationMap[path[i - 1]].lat, stationMap[path[i - 1]].lng, stationMap[sid].lat, stationMap[sid].lng); }
+                html += '<span class="station-chip">' + stationMap[sid].name + ' <small>[' + stationMap[sid].lines.join(', ') + ']</small></span>';
+            });
+            html += '</div><p>📏 Approx. path distance: <strong>' + totalDist.toFixed(2) + ' km</strong></p></div>';
+            res.innerHTML = html;
+        }
+
+        // ===================== UPGRADED MALL FINDER (Proximity + Surau) =====================
+        function findMallsProximity() {
+            const sid = document.getElementById('mallStation').value;
+            const s = stationMap[sid];
+            const resultDiv = document.getElementById('mallResult');
+
+            // Calculate distances to all malls
+            const mallDistances = mallsDatabase.map(mall => ({
+                ...mall,
+                distance: haversineKm(s.lat, s.lng, mall.lat, mall.lng)
+            })).sort((a, b) => a.distance - b.distance).slice(0, 5);
+
+            let html = '<div class="result-box"><p><strong>' + s.name + '</strong> — nearest malls:</p>';
+            html += '<div class="mall-grid">';
+            mallDistances.forEach(mall => {
+                html += `<div class="mall-card">
+                    <div class="mall-name">${mall.name}</div>
+                    <div class="mall-dist">📍 ${mall.distance.toFixed(2)} km</div>
+                    <div>${mall.surau ? '<span class="surau-tag">🕌 Surau available</span>' : '<span class="no-surau">❌ No surau</span>'}</div>
+                    <div style="font-size:0.78rem;margin-top:4px;color:var(--text-secondary);">${mall.surauDetails}</div>
+                </div>`;
+            });
+            html += '</div></div>';
+            resultDiv.innerHTML = html;
+        }
+
+        function renderDirectMappings() {
+            const div = document.getElementById('directMappingsTable');
+            let html = '<table><thead><tr><th>Station</th><th>Directly Connected Malls</th></tr></thead><tbody>';
+            for (const [sid, malls] of Object.entries(mallLookup)) {
+                if (stationMap[sid]) {
+                    html += `<tr><td>${stationMap[sid].name}</td><td>${malls.join(', ')}</td></tr>`;
+                }
+            }
+            html += '</tbody></table>';
+            div.innerHTML = html;
+        }
+
+        function findAlternatives() {
+            const sid = document.getElementById('altStation').value;
+            const alts = getDefaultAlternatives(sid);
+            let html = '<div class="result-box"><p>🚌 Backup options near <strong>' + stationMap[sid].name + '</strong>:</p><table><thead><tr><th>Option</th><th>Description</th><th>Coverage</th></tr></thead><tbody>';
+            alts.forEach(a => { html += '<tr><td>' + a.type + '</td><td>' + a.desc + '</td><td>' + a.coverage + '</td></tr>'; });
+            html += '</tbody></table></div>';
+            document.getElementById('altResult').innerHTML = html;
+        }
+
+        // ===================== MAP & LIVE DATA (unchanged) =====================
+        let map, trainLayer, busLayer, stationLayerGroup;
+        let mapClickCount = 0, originMarker = null, destMarker = null, originCoords = null, destCoords = null;
+        let liveInterval;
+
+        function initMap() {
+            if (map) return;
+            map = L.map('map', { center: [3.135, 101.688], zoom: 12, zoomControl: true });
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; CARTO & OSM', subdomains: 'abcd', maxZoom: 19
+            }).addTo(map);
+            stationLayerGroup = L.layerGroup().addTo(map);
+            const colors = { 'MRT Kajang': '#3fb950', 'LRT Kelana Jaya': '#f85149', 'Monorail': '#d2991d', 'KTM': '#58a6ff', 'BRT Sunway': '#a371f7', 'LRT Ampang': '#f0883e' };
+            stations.forEach(s => {
+                const col = colors[s.lines[0]] || '#fff';
+                L.circleMarker([s.lat, s.lng], { radius: 7, fillColor: col, color: '#fff', weight: 1.5, opacity: 0.9, fillOpacity: 0.85 })
+                    .bindTooltip('<strong>' + s.name + '</strong><br>' + s.lines.join(', '), { direction: 'top' })
+                    .addTo(stationLayerGroup);
+            });
+            trainLayer = L.layerGroup().addTo(map);
+            busLayer = L.layerGroup().addTo(map);
+
+            map.on('click', function(e) {
+                if (mapClickCount === 0) {
+                    if (originMarker) map.removeLayer(originMarker);
+                    originCoords = e.latlng;
+                    originMarker = L.marker([e.latlng.lat, e.latlng.lng], {
+                        icon: L.divIcon({ className: '', html: '<div style="background:#3fb950;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;border:3px solid #fff;">O</div>', iconSize: [28,28], iconAnchor: [14,14] })
+                    }).addTo(map);
+                    mapClickCount = 1; updateDistance();
+                } else if (mapClickCount === 1) {
+                    if (destMarker) map.removeLayer(destMarker);
+                    destCoords = e.latlng;
+                    destMarker = L.marker([e.latlng.lat, e.latlng.lng], {
+                        icon: L.divIcon({ className: '', html: '<div style="background:#f85149;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;border:3px solid #fff;">D</div>', iconSize: [28,28], iconAnchor: [14,14] })
+                    }).addTo(map);
+                    mapClickCount = 2; updateDistance();
+                } else { resetMapMarkers(); mapClickCount = 0; map.fire('click', e); }
+            });
+            refreshLiveLayers();
+            liveInterval = setInterval(refreshLiveLayers, 30000);
+        }
+
+        function updateDistance() {
+            const div = document.getElementById('mapDistanceResult');
+            if (originCoords && destCoords) {
+                const d = haversineKm(originCoords.lat, originCoords.lng, destCoords.lat, destCoords.lng);
+                div.innerHTML = '<span style="color:#3fb950;">📍 Origin</span> ↔ <span style="color:#f85149;">📍 Destination</span> — <strong>' + d.toFixed(2) + ' km</strong>';
+            } else if (originCoords) div.innerHTML = '<span style="color:#3fb950;">📍 Origin placed.</span> Click again for destination.';
+            else div.innerHTML = '';
+        }
+
+        function resetMapMarkers() {
+            if (originMarker) { map.removeLayer(originMarker); originMarker = null; }
+            if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+            originCoords = destCoords = null; mapClickCount = 0; updateDistance();
+        }
+
+        async function fetchGTFSRealtime(url) {
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const buf = await res.arrayBuffer();
+                const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(new Uint8Array(buf));
+                return feed.entity || [];
+            } catch (e) { console.warn('GTFS fetch error:', e); return []; }
+        }
+
+        function parseVehicleEntities(entities, type) {
+            return entities.filter(e => e.vehicle && e.vehicle.position).map(e => ({
+                id: e.vehicle.vehicle?.id || '?', route: e.vehicle.trip?.routeId || '',
+                lat: e.vehicle.position.latitude, lng: e.vehicle.position.longitude,
+                speed: e.vehicle.position.speed ? (e.vehicle.position.speed * 3.6).toFixed(1) : null,
+                bearing: e.vehicle.position.bearing || null, type
+            }));
+        }
+
+        async function refreshLiveLayers() {
+            const showTrains = document.getElementById('toggleTrains').checked;
+            const showBuses = document.getElementById('toggleBuses').checked;
+            const busCat = document.getElementById('busCategorySelect').value;
+            if (showTrains) {
+                const entities = await fetchGTFSRealtime('https://api.data.gov.my/gtfs-realtime/vehicle-position/ktmb');
+                const trains = parseVehicleEntities(entities, 'train');
+                trainLayer.clearLayers();
+                trains.forEach(t => {
+                    L.circleMarker([t.lat, t.lng], { radius: 6, fillColor: '#ff9800', color: '#fff', weight: 1.5, fillOpacity: 0.9 })
+                        .bindPopup('🚂 <b>' + t.id + '</b><br>Route: ' + t.route + '<br>Speed: ' + (t.speed || '?') + ' km/h')
+                        .addTo(trainLayer);
+                });
+            } else trainLayer.clearLayers();
+            if (showBuses) {
+                const entities = await fetchGTFSRealtime('https://api.data.gov.my/gtfs-realtime/vehicle-position/prasarana?category=' + busCat);
+                const buses = parseVehicleEntities(entities, 'bus');
+                busLayer.clearLayers();
+                buses.forEach(b => {
+                    L.circleMarker([b.lat, b.lng], { radius: 5.5, fillColor: '#03a9f4', color: '#fff', weight: 1.5, fillOpacity: 0.9 })
+                        .bindPopup('🚌 <b>' + b.route + '</b><br>Vehicle: ' + b.id + '<br>Speed: ' + (b.speed || '?') + ' km/h')
+                        .addTo(busLayer);
+                });
+            } else busLayer.clearLayers();
+            document.getElementById('liveUpdateTime').textContent = '🕒 Updated: ' + new Date().toLocaleTimeString();
+        }
+
+        function refreshLiveBusLayer() { refreshLiveLayers(); }
+        function toggleLayer(type) {
+            if (type === 'trains') document.getElementById('toggleTrains').checked ? refreshLiveLayers() : trainLayer.clearLayers();
+            if (type === 'buses') document.getElementById('toggleBuses').checked ? refreshLiveLayers() : busLayer.clearLayers();
+        }
+
+        async function searchMapLocation() {
+            const q = document.getElementById('mapSearchInput').value.trim();
+            if (!q) return;
+            try {
+                const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q + ' Kuala Lumpur'));
+                const data = await res.json();
+                if (data.length) {
+                    const lat = +data[0].lat, lng = +data[0].lon;
+                    map.setView([lat, lng], 15);
+                    L.popup().setLatLng([lat, lng]).setContent('<strong>🔍 ' + data[0].display_name.split(',')[0] + '</strong>').openOn(map);
+                } else alert('📍 Location not found.');
+            } catch { alert('⚠️ Search failed.'); }
+        }
+
+        // ===================== TAB SWITCHING =====================
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            const content = document.getElementById(tabId);
+            if (content) content.classList.add('active');
+            const btn = document.querySelector(`[data-tab="${tabId}"]`);
+            if (btn) btn.classList.add('active');
+            if (tabId === 'tab-map') {
+                if (!map) initMap();
+                else setTimeout(() => map.invalidateSize(), 200);
+            }
+            if (tabId === 'tab-malls') {
+                // refresh mall results for currently selected station
+                findMallsProximity();
+            }
+        }
+
+        document.getElementById('tabNav').addEventListener('click', e => {
+            const btn = e.target.closest('.tab-btn');
+            if (btn) switchTab(btn.getAttribute('data-tab'));
+        });
+
+        window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
+
+        // ===================== INIT =====================
+        function init() {
+            populateAllDropdowns();
+            renderDirectMappings();
+            findMallsProximity(); // show default KL Sentral malls
+        }
+        document.addEventListener('DOMContentLoaded', init);
+        console.log('🚇 MY Transit Hub ready — Mall Finder upgraded with proximity search & surau data.');
+    </script>
+</body>
+</html>
